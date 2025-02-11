@@ -78,7 +78,7 @@ class benchmark_base:
     def clean_text(self, text):
         pattern = r"[^a-zA-Z0-9 !#$%&()*'\"+,.:;<=>?@_{|}-]"
         cleaned_text = re.sub(pattern, ' ', text)
-        return re.sub("\s\s+" , " ", cleaned_text).strip()
+        return re.sub(r"\s\s+", " ", cleaned_text).strip()
 
     def result_list_preprocessing(self, pred_text_list, result_type="multiple_choice"):
         error_num = 0
@@ -159,12 +159,10 @@ class benchmark_base:
         else:
             return MULTIPLE_CHOICE_DEFAULT_USER_PROMPT
     
-
     def get_user_prompt_new(self, prompt_type="base"):
         with open(os.path.join(project_root_dir, f'./data/task_prompts/{self.name}/{prompt_type}.md'), 'r') as file:
             user_prompt = file.read()
         return user_prompt
-
     
     def get_max_token_len(self):
         if self.cot != 0:
@@ -388,8 +386,7 @@ class benchmark_socket(benchmark_base):
                                   "jigsaw#insult":  'For the sentence: "{question_prompt}", is it an insult?' + YES_NO_POSTFIX,
                                   }
         self.task_type = self.name[len("socket_"):]
-        assert self.task_type in self.task_type_options
-        data = load_dataset('Blablablab/SOCKET',self.task_type, trust_remote_code=True)["sockette"]
+        data = load_dataset('Blablablab/SOCKET', self.task_type, trust_remote_code=True)["sockette"]
         self.data_df = pd.DataFrame({"text": data["text"], "label": data["label"], "task_type": self.name})
 
         # Some benchmark labels are reversed

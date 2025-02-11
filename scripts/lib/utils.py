@@ -5,6 +5,10 @@ from tqdm import tqdm
 from rouge_score import rouge_scorer, scoring
 from sklearn.metrics import accuracy_score, f1_score
 from multiprocessing import Pool
+import pandas as pd
+import asyncio
+
+CORES=4
 
 def split_multi_answer(ans, sep=';', close=True, add_no_comment=False):
 
@@ -57,11 +61,11 @@ def bleurt_score(prediction, ref_true, ref_false, bleurt):
 def tmp_func(a, b, bleurt):
     return bleurt.compute(predictions=a,references=b)['scores']
 
-def bleurt_score_parallel(prediction, ref_true, ref_false, bleurt):
+def bleurt_score_parallel(prediction, ref_true, ref_false, bleurt, cores=CORES):
     assert len(prediction) == len(ref_true) == len(ref_false)
     res_metric = {}
     
-    pool = Pool(os.cpu_count())
+    pool = Pool(cores)
     
     mp_list = [([prediction[idx]] * len(ref_true[idx]), ref_true[idx], bleurt) for idx in range(len(prediction))]
     mapping = pool.starmap(tmp_func, mp_list)
@@ -96,10 +100,10 @@ def bleurt_score_parallel(prediction, ref_true, ref_false, bleurt):
     
     return res_metric
 
-def bleu_score(prediction, ref_true, ref_false, return_error_idx=False):
+def bleu_score(prediction, ref_true, ref_false, return_error_idx=False, cores=CORES):
     assert len(prediction) == len(ref_true) == len(ref_false)
     res_metric = {}
-    pool = Pool(os.cpu_count())
+    pool = Pool(cores)
     for idx in range(len(prediction)):
         all_refs = ref_true[idx] + ref_false[idx]
         #bleu_scores = [_bleu([ref], [prediction[idx]]) for ref in all_refs]
@@ -132,10 +136,10 @@ def bleu_score(prediction, ref_true, ref_false, return_error_idx=False):
     return res_metric
 
 
-def rouge_score(prediction, ref_true, ref_false):
+def rouge_score(prediction, ref_true, ref_false, cores=CORES):
     assert len(prediction) == len(ref_true) == len(ref_false)
     res_metric = {}
-    pool = Pool(os.cpu_count())
+    pool = Pool(cores)
     for idx in range(len(prediction)):
         all_refs = ref_true[idx] + ref_false[idx]
         #rouge_scores = [_rouge([ref], [prediction[idx]]) for ref in all_refs]
@@ -239,3 +243,124 @@ def custom_f1_score(true_label_list, pred_label_list, model_name=""):
             #f"{model_name}_f1_no_error": f1_score(no_error_true_label_list, no_error_pred_label_list, zero_division=0.0),
             #f"{model_name}_error": error_num}
     return metrics
+
+
+class prompt_component_manager:
+    def __init__(self, prompt_component_list=[]):
+        self.prompt_component_database = {}
+        for prompt_component in prompt_component_list:
+            self.prompt_component_database[prompt_component] = {"source_prompt": prompt_component, "scores": []}
+    
+    def add_new_component(self, new_component, source_component=None):
+        if new_component in self.prompt_component_database:
+            return
+        if source_component in self.prompt_component_database:
+            self.prompt_component_database[new_component] = {"source_prompt": self.prompt_component_database[source_component]["source_prompt"], "scores": []}
+        elif source_component is None:
+            self.prompt_component_database[new_component] = {"source_prompt": new_component, "scores": []}
+
+    
+    def add_component_scores(self, prompt_components_lst, score):
+        for prompt_component in prompt_components_lst:
+            if prompt_component not in self.prompt_component_database:
+                self.add_new_component(prompt_component)
+                print(f"Detected unregistered component: {prompt_component}", flush=True)
+            self.prompt_component_database[prompt_component]["scores"].append(score)
+    
+    def get_curr_component_ranking(self):
+        prompt_component_database_df = pd.DataFrame.from_dict(self.prompt_component_database, orient='index')
+        source_prompt_ranking = prompt_component_database_df[["source_prompt", "scores"]].groupby("source_prompt").sum().reset_index()
+
+        source_prompt_ranking["avg_scores"] = source_prompt_ranking["scores"].apply(lambda x: np.mean(x) if len(x) > 0 else 0)
+        source_prompt_ranking = source_prompt_ranking.sort_values(by='avg_scores', ascending=False)
+
+        return source_prompt_ranking
+    
+    def ucb_choose(self, n):
+        source_prompt_ranking = self.get_curr_component_ranking()
+        counts = np.array(source_prompt_ranking["scores"].apply(lambda x: len(x)))
+        if np.sum(counts) == 0:
+            return list(source_prompt_ranking["source_prompt"])
+        source_prompt_ranking["ucbscore"] = np.array(source_prompt_ranking["avg_scores"]) + np.sqrt(2*np.log(np.sum(counts) + 1e-3) / counts)
+        source_prompt_ranking = source_prompt_ranking.sort_values(by='ucbscore', ascending=False)
+        return list(source_prompt_ranking["source_prompt"])[:n]
+    
+
+    def save_database(self, save_dir="prompt_component_databse.csv"):
+        pd.DataFrame.from_dict(self.prompt_component_database, orient='index').reset_index().rename(columns={'index': 'prompt'}).to_csv(save_dir, index=False)
+
+
+def run_model_eval(system_prompts, model_obj, benchmark_obj_list, eval_metric_name, split="all"):
+    # Validate and normalize input formats
+    system_prompts = np.unique(system_prompts).tolist()
+    if not isinstance(benchmark_obj_list, list):
+        benchmark_obj_list = [benchmark_obj_list]
+    for idx in range(len(benchmark_obj_list)):
+        if not isinstance(benchmark_obj_list[idx], tuple):
+            benchmark_obj_list[idx] = (benchmark_obj_list[idx], None)
+
+    metric_dict = {}
+    core_metric_dict = {k:[] for k in system_prompts}
+    benchmark_len_list = []
+
+    # Overall progress tracking
+    print(f"Starting evaluation for {len(benchmark_obj_list)} benchmarks")
+    print(f"System prompts to evaluate: {len(system_prompts)}")
+
+    # Iterate through benchmarks with progress tracking
+    for benchmark_idx, (benchmark_obj, num_q) in enumerate(tqdm(benchmark_obj_list, desc="Benchmarks"), 1):
+        print(f"\n[Benchmark {benchmark_idx}/{len(benchmark_obj_list)}] Processing: {benchmark_obj}")
+
+        # Load questions
+        q_list, eval_range = benchmark_obj.load_random_question_list(num_q=num_q, split=split)
+        benchmark_len_list.append(len(q_list))
+        print(f"  - Loaded {len(q_list)} questions")
+
+        user_prompt = benchmark_obj.get_user_prompt()
+
+        # Prepare prompts for all system prompts
+        answer_prompts = []
+        for system_prompt in tqdm(system_prompts, desc="System Prompts", leave=False):
+            for q in q_list:
+                full_prompt = model_obj.get_prompt_template().format(
+                    system_prompt=system_prompt, 
+                    user_prompt=user_prompt.format(question_prompt=q)
+                )
+                answer_prompts.append(full_prompt)
+
+        # Generate outputs
+        print(f"  - Generating model outputs for {len(answer_prompts)} answer prompts...")
+        full_outputs = asyncio.run(model_obj.generate(answer_prompts, max_token_len=512))
+
+        # Evaluate outputs for each system prompt
+        for idx, system_prompt in enumerate(tqdm(system_prompts, desc="Evaluating System Prompts", leave=False)):
+            # Extract outputs for current system prompt
+            outputs = full_outputs[(idx)*len(q_list):(idx+1)*len(q_list)]
+
+            # Evaluate outputs
+            metric_dict_single = benchmark_obj.eval_question_list(
+                outputs, 
+                save_intermediate=("eval", model_obj.model_name, system_prompt), 
+                eval_range=eval_range
+            )
+
+            # Aggregate metrics
+            core_metric_dict[system_prompt].append(list(metric_dict_single.values())[0])
+
+            # Update metric dictionary
+            for key, value in metric_dict_single.items():
+                metric_key = f"{model_obj.model_name}/{key}"
+                if metric_key not in metric_dict:
+                    metric_dict[metric_key] = {system_prompt: value}
+                else:
+                    metric_dict[metric_key][system_prompt] = value
+
+    # Calculate final metrics
+    print("\nCalculating final metrics...")
+    metric_dict[f"{model_obj.model_name}/{eval_metric_name}"] = {}
+    for system_prompt in system_prompts:
+        weighted_metric = sum(np.array(core_metric_dict[system_prompt]) * np.array(benchmark_len_list)) / np.sum(benchmark_len_list)
+        metric_dict[f"{model_obj.model_name}/{eval_metric_name}"][system_prompt] = weighted_metric
+        print(f"  - {system_prompt}: {weighted_metric}")
+
+    return metric_dict

@@ -1,0 +1,168 @@
+import os
+import modal
+import pandas as pd
+import numpy as np
+from dotenv import load_dotenv
+import asyncio
+from tqdm import tqdm
+from lib.dataloader import init_benchmark
+from lib.modelloader import inference_model, para_model
+from lib.utils import run_model_eval, prompt_component_manager
+from config import num_questions, num_comp, num_iter, num_rephrase, base_url, beam_size, chatbot_name, benchmark_obj_list, model_name
+
+image = (
+    modal.Image.debian_slim()
+    .add_local_file("requirements.txt", "/root/requirements.txt", copy=True)
+    .run_commands("pip install uv && uv pip install --system -r /root/requirements.txt")
+    .add_local_python_source("lib", "config")
+)
+
+app = modal.App("prompt_beam_search", image=image)
+
+load_dotenv()
+
+@app.function(
+    timeout=50000,
+    secrets=[modal.Secret.from_dotenv()],
+    volumes={
+        "/data": modal.Volume.from_name("prompt-optimization-data", create_if_missing=True)
+    }
+)
+def run_beam_search(benchmark_obj_list_eval, prompt_corpus):
+    api_key=os.getenv("API_TOKEN")
+
+    base_prompt = "You are a charismatic assistant."
+
+    model_obj = inference_model(model_name=model_name, base_url=base_url, api_key=api_key)
+
+    eval_metric_name = "avg_score"
+    full_eval_metric_name = f"{model_obj.model_name}/{eval_metric_name}"
+
+    all_prompt_database = {}
+    if full_eval_metric_name not in all_prompt_database:
+        all_prompt_database[full_eval_metric_name] = {}
+
+    pcm_obj = prompt_component_manager(prompt_corpus["Prompt"])
+
+    edit_options = ['del', 'swap', 'sub', 'add']
+
+    sentence_splitter = " /// "
+
+    if 'sub' in edit_options:
+        para_model_obj = para_model(model_name=model_name, base_url=base_url, api_key=api_key)
+
+    curr_prompt_list = [base_prompt]
+    # Evaluation
+    eval_candidates = curr_prompt_list
+    metrics_tmp_eval = run_model_eval([candidate.replace(sentence_splitter, " ") for candidate in eval_candidates], model_obj, benchmark_obj_list_eval, eval_metric_name=eval_metric_name, split="test")
+    for candidate in eval_candidates:
+        for metric_key_tmp in metrics_tmp_eval:
+            if "eval_"+metric_key_tmp not in all_prompt_database:
+                all_prompt_database["eval_"+metric_key_tmp] = {}
+            all_prompt_database["eval_"+metric_key_tmp][candidate] = metrics_tmp_eval[metric_key_tmp][candidate.replace(sentence_splitter, " ")]
+
+    for iter_idx in tqdm(range(1, num_iter)):
+        candidates = []
+        for curr_prompt in curr_prompt_list:
+            for edit in edit_options:
+                prompt_component_lst = curr_prompt.split(sentence_splitter) if len(curr_prompt) > 0 else []
+                if edit == "add":
+                    for pos in range(len(prompt_component_lst)+1):
+                        for new_component in pcm_obj.ucb_choose(num_comp):
+                        #for new_component in prompt_corpus["Prompt"]:
+                            prompt_component_lst_new = prompt_component_lst.copy()
+                            prompt_component_lst_new.insert(pos, new_component)
+                            candidates.append(sentence_splitter.join(prompt_component_lst_new))
+                elif edit == "del":
+                    for pos in range(len(prompt_component_lst)):
+                        prompt_component_lst_new = prompt_component_lst.copy()
+                        prompt_component_lst_new.pop(pos)
+                        candidates.append(sentence_splitter.join(prompt_component_lst_new))
+                elif edit == "swap":
+                    for pos1 in range(len(prompt_component_lst)-1):
+                        for pos2 in range(pos1+1, len(prompt_component_lst)):
+                            prompt_component_lst_new = prompt_component_lst.copy()
+                            prompt_component_lst_new[pos1], prompt_component_lst_new[pos2] = prompt_component_lst_new[pos2], prompt_component_lst_new[pos1]
+                            candidates.append(sentence_splitter.join(prompt_component_lst_new))
+                elif edit == "sub":
+                    for pos in range(len(prompt_component_lst)):
+                        rephrase_candidates = para_model_obj.rephrase(prompt_component_lst[pos], num_rephrase)
+                        for rephrase_candidate in rephrase_candidates:
+                            if prompt_component_lst[pos] == rephrase_candidate:
+                                continue
+                            prompt_component_lst_new = prompt_component_lst.copy()
+                            prompt_component_lst_new[pos] = rephrase_candidate
+
+                            pcm_obj.add_new_component(rephrase_candidate, prompt_component_lst[pos])
+                            candidates.append(sentence_splitter.join(prompt_component_lst_new))
+                # Deduplicate candidates
+                candidates = list(set(candidates))
+        
+    print(len(candidates))
+    metrics_tmp = run_model_eval([candidate.replace(sentence_splitter, " ") for candidate in candidates], model_obj, benchmark_obj_list,  eval_metric_name=eval_metric_name, split="train")
+
+    candidate_results = []
+    for candidate in candidates:
+        for metric_key_tmp in metrics_tmp:
+            if metric_key_tmp not in all_prompt_database:
+                all_prompt_database[metric_key_tmp] = {}
+            if candidate in all_prompt_database[metric_key_tmp]:
+                all_prompt_database[metric_key_tmp][candidate].append(metrics_tmp[metric_key_tmp][candidate.replace(sentence_splitter, " ")])
+            else:
+                all_prompt_database[metric_key_tmp][candidate] = [metrics_tmp[metric_key_tmp][candidate.replace(sentence_splitter, " ")]]
+        
+        # Register score into component manager
+        pcm_obj.add_component_scores(candidate.split(sentence_splitter), metrics_tmp[full_eval_metric_name][candidate.replace(sentence_splitter, " ")])
+
+        # Record iteration
+        if "num_iter" not in all_prompt_database:
+            all_prompt_database["num_iter"] = {}
+        if candidate in all_prompt_database["num_iter"]:
+            all_prompt_database["num_iter"][candidate].append(iter_idx)
+        else:
+            all_prompt_database["num_iter"][candidate] = [iter_idx]
+
+        candidate_results.append((metrics_tmp[full_eval_metric_name][candidate.replace(sentence_splitter, " ")], candidate))
+        assert candidate in all_prompt_database[full_eval_metric_name]
+    
+    candidate_results.sort(reverse=True)
+    print(candidate_results[:beam_size])
+    curr_prompt_list = [tmp_item[1] for tmp_item in candidate_results[:beam_size]]
+    
+    df_output = pd.DataFrame(all_prompt_database)
+    df_output[full_eval_metric_name+"_raw"] = df_output[full_eval_metric_name]
+    df_output[full_eval_metric_name] = df_output[full_eval_metric_name].apply(lambda x: np.mean(x))
+
+    # Evaluation
+    eval_candidates = [_item[1] for _item in candidate_results[:beam_size]]
+    metrics_tmp_eval = run_model_eval([candidate.replace(sentence_splitter, " ") for candidate in eval_candidates], model_obj, benchmark_obj_list_eval, split="test")
+    for candidate in eval_candidates:
+        for metric_key_tmp in metrics_tmp_eval:
+            if "eval_"+metric_key_tmp not in all_prompt_database:
+                all_prompt_database["eval_"+metric_key_tmp] = {}
+            all_prompt_database["eval_"+metric_key_tmp][candidate] = metrics_tmp_eval[metric_key_tmp][candidate.replace(sentence_splitter, " ")]
+
+    df_output = df_output.sort_values(by=full_eval_metric_name, ascending=False)
+    print(df_output.head(5), flush=True)
+    df_output.to_csv("all_prompt_database_beamsearch_5.csv")
+    pcm_obj.save_database("prompt_component_databse_5.csv")
+    results = {
+        "model_name": model_name,
+        "iterations": num_iter,
+        "best_prompts": []
+    }
+
+    return results
+
+@app.local_entrypoint()
+def main():
+    for idx in range(len(benchmark_obj_list)):
+        if isinstance(benchmark_obj_list[idx][0], str):
+            benchmark_obj_list[idx] = (init_benchmark(name=benchmark_obj_list[idx][0], cot=0), num_questions)
+
+    benchmark_obj_list_eval = [(benchmark_obj_list[idx][0], None) for idx in range(len(benchmark_obj_list))]
+        
+    prompt_corpus = pd.read_csv("./data/system_prompts/prompt_corpus.csv")
+
+    results = run_beam_search.remote(benchmark_obj_list_eval, prompt_corpus)
+    print("Beam Search Results:", results)

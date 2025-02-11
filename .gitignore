@@ -17,3 +17,6 @@ results
 # Shells
 *.sh
 *.out
+
+
+.env
