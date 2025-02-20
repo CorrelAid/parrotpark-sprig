@@ -10,35 +10,38 @@ import re
 import json
 
 project_root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../"))
-data_dir = {"mmlu": "./data/benchmark/mmlu/mmlu_mingqian.csv", 
-            "arc": "./data/benchmark/arc/ARC-Challenge-Test.csv",
-            "hellaswag": "./data/benchmark/hellaswag/hellaswag_train.jsonl",
-            "truthfulqa": "./data/benchmark/truthfulqa/TruthfulQA.csv",
-            "hitom": "./data/benchmark/hitom/Hi-ToM_data.json",
-            "edos_taska": "./data/benchmark/edos/edos_labelled_aggregated_1000.csv",
-            "edos_taskbc": "./data/benchmark/edos/edos_labelled_sexist.csv",
-            "ifeval": "./data/benchmark/ifeval/input_data.jsonl",
-            "bbh": "./data/benchmark/bbh/",
-            "brainteaser": "./data/benchmark/brainteaser/brainteaser_semantic-reconstruction.csv",
-            "gsm8k": "./data/benchmark/gsm8k/gsm8k_test.csv",
-            "timexnli": "./data/benchmark/timexnli/timexnli_cs2_timebench.jsonl",
-            "winogrande": "./data/benchmark/winogrande/winogrande.csv",
-            "tombench": "./data/benchmark/tombench/",
-            "emobench": "./data/benchmark/emobench/emobench.csv",
-            "commonsenseqa": "./data/benchmark/commonsenseqa/commonsenseqa.jsonl",
-            "boolq": "./data/benchmark/boolq/boolq.csv",
-            "bb_minute_mysteries_qa": "./data/benchmark/bb/bb_minute_mysteries_qa.csv",
-            "strategyqa": "./data/benchmark/strategyqa/strategyqa.csv",
-            "musr": "./data/benchmark/musr/musr.csv",
-            "piqa": "./data/benchmark/piqa/piqa.csv",
-            "riddlesense": "./data/benchmark/riddlesense/riddlesense.csv",
-            "mgsm": "./data/benchmark/mgsm/mgsm.csv",
-            "belebele": "./data/benchmark/belebele/belebele.csv",
-            "xcopa": "./data/benchmark/xcopa/xcopa.csv",
-            "m3exam": "./data/benchmark/m3exam/m3exam.csv",
-            "m_mmlu": "./data/benchmark/mmlu/m_mmlu.csv",
+
+data_root_dir = "/root/data"
+
+data_dir = {"mmlu": f"{data_root_dir}/benchmark/mmlu/mmlu_mingqian.csv", 
+            "arc": f"{data_root_dir}/benchmark/arc/ARC-Challenge-Test.csv",
+            "hellaswag": f"{data_root_dir}/benchmark/hellaswag/hellaswag_train.jsonl",
+            "truthfulqa": f"{data_root_dir}/benchmark/truthfulqa/TruthfulQA.csv",
+            "hitom": f"{data_root_dir}/benchmark/hitom/Hi-ToM_data.json",
+            "edos_taska": f"{data_root_dir}/benchmark/edos/edos_labelled_aggregated_1000.csv",
+            "edos_taskbc": f"{data_root_dir}/benchmark/edos/edos_labelled_sexist.csv",
+            "ifeval": f"{data_root_dir}/benchmark/ifeval/input_data.jsonl",
+            "bbh": f"{data_root_dir}/benchmark/bbh/",
+            "brainteaser": f"{data_root_dir}/benchmark/brainteaser/brainteaser_semantic-reconstruction.csv",
+            "gsm8k": f"{data_root_dir}/benchmark/gsm8k/gsm8k_test.csv",
+            "timexnli": f"{data_root_dir}/benchmark/timexnli/timexnli_cs2_timebench.jsonl",
+            "winogrande": f"{data_root_dir}/benchmark/winogrande/winogrande.csv",
+            "tombench": f"{data_root_dir}/benchmark/tombench/",
+            "emobench": f"{data_root_dir}/benchmark/emobench/emobench.csv",
+            "commonsenseqa": f"{data_root_dir}/benchmark/commonsenseqa/commonsenseqa.jsonl",
+            "boolq": f"{data_root_dir}/benchmark/boolq/boolq.csv",
+            "bb_minute_mysteries_qa": f"{data_root_dir}/benchmark/bb/bb_minute_mysteries_qa.csv",
+            "strategyqa": f"{data_root_dir}/benchmark/strategyqa/strategyqa.csv",
+            "musr": f"{data_root_dir}/benchmark/musr/musr.csv",
+            "piqa": f"{data_root_dir}/benchmark/piqa/piqa.csv",
+            "riddlesense": f"{data_root_dir}/benchmark/riddlesense/riddlesense.csv",
+            "mgsm": f"{data_root_dir}/benchmark/mgsm/mgsm.csv",
+            "belebele": f"{data_root_dir}/benchmark/belebele/belebele.csv",
+            "xcopa": f"{data_root_dir}/benchmark/xcopa/xcopa.csv",
+            "m3exam": f"{data_root_dir}/benchmark/m3exam/m3exam.csv",
+            "m_mmlu": f"{data_root_dir}/benchmark/mmlu/m_mmlu.csv",
             }
-save_intermediate_dir = os.path.join(project_root_dir, "./results/benchmark")
+save_intermediate_dir = "/root/results/benchmark"
 
 #MULTIPLE_CHOICE_DEFAULT_USER_PROMPT = "The following is a multiple choice question (with answers). Reply with only the option letter.\n{question_prompt}"
 MULTIPLE_CHOICE_DEFAULT_USER_PROMPT = 'The following is a multiple choice question (with answers).\n{question_prompt}\nAt the very end, you **must** type "Answer:" first, then you **must** print your final answer (option letter only).'

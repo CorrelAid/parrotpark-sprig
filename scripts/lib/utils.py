@@ -244,7 +244,6 @@ def custom_f1_score(true_label_list, pred_label_list, model_name=""):
             #f"{model_name}_error": error_num}
     return metrics
 
-
 class prompt_component_manager:
     def __init__(self, prompt_component_list=[]):
         self.prompt_component_database = {}
@@ -274,7 +273,9 @@ class prompt_component_manager:
         source_prompt_ranking["avg_scores"] = source_prompt_ranking["scores"].apply(lambda x: np.mean(x) if len(x) > 0 else 0)
         source_prompt_ranking = source_prompt_ranking.sort_values(by='avg_scores', ascending=False)
 
-        return source_prompt_ranking
+        #prompt_component_database_df["avg_scores"] = prompt_component_database_df["scores"].apply(lambda x: np.mean(x))
+        #prompt_component_database_df = prompt_component_database_df.sort_values(by='avg_scores', ascending=False)
+        return source_prompt_ranking#, prompt_component_database_df
     
     def ucb_choose(self, n):
         source_prompt_ranking = self.get_curr_component_ranking()
@@ -361,6 +362,5 @@ def run_model_eval(system_prompts, model_obj, benchmark_obj_list, eval_metric_na
     for system_prompt in system_prompts:
         weighted_metric = sum(np.array(core_metric_dict[system_prompt]) * np.array(benchmark_len_list)) / np.sum(benchmark_len_list)
         metric_dict[f"{model_obj.model_name}/{eval_metric_name}"][system_prompt] = weighted_metric
-        print(f"  - {system_prompt}: {weighted_metric}")
 
     return metric_dict

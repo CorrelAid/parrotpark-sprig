@@ -2,36 +2,101 @@ import os
 import modal
 import pandas as pd
 import numpy as np
-from dotenv import load_dotenv
-import asyncio
+import nltk
 from tqdm import tqdm
 from lib.dataloader import init_benchmark
 from lib.modelloader import inference_model, para_model
 from lib.utils import run_model_eval, prompt_component_manager
-from config import num_questions, num_comp, num_iter, num_rephrase, base_url, beam_size, chatbot_name, benchmark_obj_list, model_name
 
 image = (
     modal.Image.debian_slim()
     .add_local_file("requirements.txt", "/root/requirements.txt", copy=True)
     .run_commands("pip install uv && uv pip install --system -r /root/requirements.txt")
-    .add_local_python_source("lib", "config")
+    .add_local_python_source("lib")
+    .add_local_dir("data", remote_path="/root/data")
 )
 
-app = modal.App("prompt_beam_search", image=image)
+app = modal.App("sprig", image=image)
 
-load_dotenv()
+model_name="VAGOsolutions/SauerkrautLM-Nemo-12b-Instruct-awq"
+base_url="https://api.parrotpark.correlaid.org"
+
+num_iter = 5
+num_rephrase = 3
+beam_size = 3
+num_comp = 5
+num_questions = 5
+
+chatbot_name = "Bot Botsen"
+
+prompt_corpus_path = "./data/system_prompts/prompt_corpus.csv"
+
+benchmark_obj_list = [
+                # ("arc", 1),
+                #   ("mmlu", 1),
+                #   ("hellaswag", 1),
+                #   ("truthfulqa", 1),
+                # weird 404 errors for # encoding 
+                #   ("socket_bragging#brag_achievement", 1),
+                #   ("socket_hahackathon#is_humor", 1),
+                #   ("socket_tweet_irony", 1),
+                #   ("socket_sexyn", 1),
+                #   ("socket_tweet_offensive", 1),
+                #   ("socket_complaints", 1),
+                #   ("socket_empathy#empathy_bin", 1),
+                #   ("socket_stanfordpoliteness", 1),
+                #   ("socket_rumor#rumor_bool", 1),
+                #   ("hitom", 1),
+                #   ("edos_taska", 1),
+                ("ifeval", 1),
+                #   ("bbh_boolean_expressions", 1),
+                #   ("bbh_causal_judgement", 1),
+                #   ("bbh_date_understanding", 1),
+                #   ("bbh_disambiguation_qa", 1),
+                #   ("bbh_dyck_languages", 1),
+                #   ("bbh_formal_fallacies", 1),
+                #   ("bbh_geometric_shapes", 1),
+                #   ("bbh_hyperbaton", 1),
+                #   ("bbh_logical_deduction_five_objects", 1),
+                #   ("bbh_logical_deduction_seven_objects", 1),
+                #   ("bbh_logical_deduction_three_objects", 1),
+                #   ("bbh_movie_recommendation", 1),
+                #   ("bbh_multistep_arithmetic_two", 1),
+                #   ("bbh_navigate", 1),
+                #   ("bbh_object_counting", 1),
+                #   ("bbh_penguins_in_a_table", 1),
+                #   ("bbh_reasoning_about_colored_objects", 1),
+                #   ("bbh_ruin_names", 1),
+                #   ("bbh_snarks", 1),
+                #   ("bbh_sports_understanding", 1),
+                #   ("bbh_temporal_sequences", 1),
+                #   ("bbh_tracking_shuffled_objects_five_objects", 1),
+                #   ("bbh_tracking_shuffled_objects_seven_objects", 1),
+                #   ("bbh_tracking_shuffled_objects_three_objects", 1),
+                #   ("bbh_web_of_lies", 1),
+                #   ("bbh_word_sorting", 1),
+                ]
+
+
 
 @app.function(
     timeout=50000,
-    secrets=[modal.Secret.from_dotenv()],
-    volumes={
-        "/data": modal.Volume.from_name("prompt-optimization-data", create_if_missing=True)
-    }
+    secrets=[modal.Secret.from_dotenv()]
 )
-def run_beam_search(benchmark_obj_list_eval, prompt_corpus):
+def run_sprig():
+    nltk.download('punkt_tab')
+
+    for idx in range(len(benchmark_obj_list)):
+        if isinstance(benchmark_obj_list[idx][0], str):
+            benchmark_obj_list[idx] = (init_benchmark(name=benchmark_obj_list[idx][0], cot=0), num_questions)
+
+    benchmark_obj_list_eval = [(benchmark_obj_list[idx][0], None) for idx in range(len(benchmark_obj_list))]
+
     api_key=os.getenv("API_TOKEN")
 
-    base_prompt = "You are a charismatic assistant."
+    base_prompt = """"""
+
+    prompt_corpus = pd.read_csv(prompt_corpus_path)
 
     model_obj = inference_model(model_name=model_name, base_url=base_url, api_key=api_key)
 
@@ -126,7 +191,7 @@ def run_beam_search(benchmark_obj_list_eval, prompt_corpus):
         assert candidate in all_prompt_database[full_eval_metric_name]
     
     candidate_results.sort(reverse=True)
-    print(candidate_results[:beam_size])
+
     curr_prompt_list = [tmp_item[1] for tmp_item in candidate_results[:beam_size]]
     
     df_output = pd.DataFrame(all_prompt_database)
@@ -135,7 +200,8 @@ def run_beam_search(benchmark_obj_list_eval, prompt_corpus):
 
     # Evaluation
     eval_candidates = [_item[1] for _item in candidate_results[:beam_size]]
-    metrics_tmp_eval = run_model_eval([candidate.replace(sentence_splitter, " ") for candidate in eval_candidates], model_obj, benchmark_obj_list_eval, split="test")
+    print("final final eval...")
+    metrics_tmp_eval = run_model_eval([candidate.replace(sentence_splitter, " ") for candidate in eval_candidates], model_obj, benchmark_obj_list_eval, eval_metric_name=eval_metric_name, split="test")
     for candidate in eval_candidates:
         for metric_key_tmp in metrics_tmp_eval:
             if "eval_"+metric_key_tmp not in all_prompt_database:
@@ -143,26 +209,17 @@ def run_beam_search(benchmark_obj_list_eval, prompt_corpus):
             all_prompt_database["eval_"+metric_key_tmp][candidate] = metrics_tmp_eval[metric_key_tmp][candidate.replace(sentence_splitter, " ")]
 
     df_output = df_output.sort_values(by=full_eval_metric_name, ascending=False)
+    
     print(df_output.head(5), flush=True)
-    df_output.to_csv("all_prompt_database_beamsearch_5.csv")
-    pcm_obj.save_database("prompt_component_databse_5.csv")
+
     results = {
-        "model_name": model_name,
-        "iterations": num_iter,
-        "best_prompts": []
+    "model_name": model_name,
+    "best_prompts": [candidate for candidate in df_output.index[:beam_size]],
     }
 
     return results
 
 @app.local_entrypoint()
 def main():
-    for idx in range(len(benchmark_obj_list)):
-        if isinstance(benchmark_obj_list[idx][0], str):
-            benchmark_obj_list[idx] = (init_benchmark(name=benchmark_obj_list[idx][0], cot=0), num_questions)
-
-    benchmark_obj_list_eval = [(benchmark_obj_list[idx][0], None) for idx in range(len(benchmark_obj_list))]
-        
-    prompt_corpus = pd.read_csv("./data/system_prompts/prompt_corpus.csv")
-
-    results = run_beam_search.remote(benchmark_obj_list_eval, prompt_corpus)
-    print("Beam Search Results:", results)
+    results = run_sprig.remote()
+    print("-------\nSprig Results:", results)
