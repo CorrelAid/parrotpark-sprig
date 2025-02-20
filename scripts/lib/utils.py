@@ -362,5 +362,4 @@ def run_model_eval(system_prompts, model_obj, benchmark_obj_list, eval_metric_na
     for system_prompt in system_prompts:
         weighted_metric = sum(np.array(core_metric_dict[system_prompt]) * np.array(benchmark_len_list)) / np.sum(benchmark_len_list)
         metric_dict[f"{model_obj.model_name}/{eval_metric_name}"][system_prompt] = weighted_metric
-
     return metric_dict

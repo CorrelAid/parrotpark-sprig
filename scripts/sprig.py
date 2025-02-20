@@ -7,6 +7,8 @@ from tqdm import tqdm
 from lib.dataloader import init_benchmark
 from lib.modelloader import inference_model, para_model
 from lib.utils import run_model_eval, prompt_component_manager
+import boto3
+from datetime import datetime
 
 image = (
     modal.Image.debian_slim()
@@ -18,14 +20,18 @@ image = (
 
 app = modal.App("sprig", image=image)
 
+
+
 model_name="VAGOsolutions/SauerkrautLM-Nemo-12b-Instruct-awq"
 base_url="https://api.parrotpark.correlaid.org"
 
-num_iter = 5
-num_rephrase = 3
-beam_size = 3
-num_comp = 5
-num_questions = 5
+num_iter = 10 # orig. 5000
+num_rephrase = 3 # orig. 10
+beam_size = 10 # orig. 10
+num_comp = 5 # orig. 60
+num_questions = 5 # orig. 10
+
+bucket_name = "sprig-results"  
 
 chatbot_name = "Bot Botsen"
 
@@ -33,48 +39,9 @@ prompt_corpus_path = "./data/system_prompts/prompt_corpus.csv"
 
 benchmark_obj_list = [
                 # ("arc", 1),
-                #   ("mmlu", 1),
-                #   ("hellaswag", 1),
+                  ("hellaswag", 1),
                 #   ("truthfulqa", 1),
-                # weird 404 errors for # encoding 
-                #   ("socket_bragging#brag_achievement", 1),
-                #   ("socket_hahackathon#is_humor", 1),
-                #   ("socket_tweet_irony", 1),
-                #   ("socket_sexyn", 1),
-                #   ("socket_tweet_offensive", 1),
-                #   ("socket_complaints", 1),
-                #   ("socket_empathy#empathy_bin", 1),
-                #   ("socket_stanfordpoliteness", 1),
-                #   ("socket_rumor#rumor_bool", 1),
-                #   ("hitom", 1),
-                #   ("edos_taska", 1),
-                ("ifeval", 1),
-                #   ("bbh_boolean_expressions", 1),
-                #   ("bbh_causal_judgement", 1),
-                #   ("bbh_date_understanding", 1),
-                #   ("bbh_disambiguation_qa", 1),
-                #   ("bbh_dyck_languages", 1),
-                #   ("bbh_formal_fallacies", 1),
-                #   ("bbh_geometric_shapes", 1),
-                #   ("bbh_hyperbaton", 1),
-                #   ("bbh_logical_deduction_five_objects", 1),
-                #   ("bbh_logical_deduction_seven_objects", 1),
-                #   ("bbh_logical_deduction_three_objects", 1),
-                #   ("bbh_movie_recommendation", 1),
-                #   ("bbh_multistep_arithmetic_two", 1),
-                #   ("bbh_navigate", 1),
-                #   ("bbh_object_counting", 1),
-                #   ("bbh_penguins_in_a_table", 1),
-                #   ("bbh_reasoning_about_colored_objects", 1),
-                #   ("bbh_ruin_names", 1),
-                #   ("bbh_snarks", 1),
-                #   ("bbh_sports_understanding", 1),
-                #   ("bbh_temporal_sequences", 1),
-                #   ("bbh_tracking_shuffled_objects_five_objects", 1),
-                #   ("bbh_tracking_shuffled_objects_seven_objects", 1),
-                #   ("bbh_tracking_shuffled_objects_three_objects", 1),
-                #   ("bbh_web_of_lies", 1),
-                #   ("bbh_word_sorting", 1),
+                #   ("gsm8k", 1)
                 ]
 
 
@@ -85,6 +52,7 @@ benchmark_obj_list = [
 )
 def run_sprig():
     nltk.download('punkt_tab')
+    current_date = datetime.now().strftime("%Y%m%d")  
 
     for idx in range(len(benchmark_obj_list)):
         if isinstance(benchmark_obj_list[idx][0], str):
@@ -94,7 +62,7 @@ def run_sprig():
 
     api_key=os.getenv("API_TOKEN")
 
-    base_prompt = """"""
+    base_prompt = ""
 
     prompt_corpus = pd.read_csv(prompt_corpus_path)
 
@@ -127,6 +95,7 @@ def run_sprig():
             all_prompt_database["eval_"+metric_key_tmp][candidate] = metrics_tmp_eval[metric_key_tmp][candidate.replace(sentence_splitter, " ")]
 
     for iter_idx in tqdm(range(1, num_iter)):
+        print(f"iteration {iter_idx} of {num_iter}")
         candidates = []
         for curr_prompt in curr_prompt_list:
             for edit in edit_options:
@@ -162,62 +131,91 @@ def run_sprig():
                             candidates.append(sentence_splitter.join(prompt_component_lst_new))
                 # Deduplicate candidates
                 candidates = list(set(candidates))
-        
-    print(len(candidates))
-    metrics_tmp = run_model_eval([candidate.replace(sentence_splitter, " ") for candidate in candidates], model_obj, benchmark_obj_list,  eval_metric_name=eval_metric_name, split="train")
 
-    candidate_results = []
-    for candidate in candidates:
-        for metric_key_tmp in metrics_tmp:
-            if metric_key_tmp not in all_prompt_database:
-                all_prompt_database[metric_key_tmp] = {}
-            if candidate in all_prompt_database[metric_key_tmp]:
-                all_prompt_database[metric_key_tmp][candidate].append(metrics_tmp[metric_key_tmp][candidate.replace(sentence_splitter, " ")])
+        print(len(candidates), candidates)
+
+        metrics_tmp = run_model_eval([candidate.replace(sentence_splitter, " ") for candidate in candidates], model_obj, benchmark_obj_list,  eval_metric_name=eval_metric_name, split="train")
+
+        candidate_results = []
+        for candidate in candidates:
+            for metric_key_tmp in metrics_tmp:
+                if metric_key_tmp not in all_prompt_database:
+                    all_prompt_database[metric_key_tmp] = {}
+                if candidate in all_prompt_database[metric_key_tmp]:
+                    all_prompt_database[metric_key_tmp][candidate].append(metrics_tmp[metric_key_tmp][candidate.replace(sentence_splitter, " ")])
+                else:
+                    all_prompt_database[metric_key_tmp][candidate] = [metrics_tmp[metric_key_tmp][candidate.replace(sentence_splitter, " ")]]
+            
+            # Register score into component manager
+            pcm_obj.add_component_scores(candidate.split(sentence_splitter), metrics_tmp[full_eval_metric_name][candidate.replace(sentence_splitter, " ")])
+
+            # Record iteration
+            if "num_iter" not in all_prompt_database:
+                all_prompt_database["num_iter"] = {}
+            if candidate in all_prompt_database["num_iter"]:
+                all_prompt_database["num_iter"][candidate].append(iter_idx)
             else:
-                all_prompt_database[metric_key_tmp][candidate] = [metrics_tmp[metric_key_tmp][candidate.replace(sentence_splitter, " ")]]
+                all_prompt_database["num_iter"][candidate] = [iter_idx]
+
+            candidate_results.append((metrics_tmp[full_eval_metric_name][candidate.replace(sentence_splitter, " ")], candidate))
+            assert candidate in all_prompt_database[full_eval_metric_name]
         
-        # Register score into component manager
-        pcm_obj.add_component_scores(candidate.split(sentence_splitter), metrics_tmp[full_eval_metric_name][candidate.replace(sentence_splitter, " ")])
+        candidate_results.sort(reverse=True)
 
-        # Record iteration
-        if "num_iter" not in all_prompt_database:
-            all_prompt_database["num_iter"] = {}
-        if candidate in all_prompt_database["num_iter"]:
-            all_prompt_database["num_iter"][candidate].append(iter_idx)
-        else:
-            all_prompt_database["num_iter"][candidate] = [iter_idx]
+        curr_prompt_list = [tmp_item[1] for tmp_item in candidate_results[:beam_size]]
+        
+        df_output = pd.DataFrame(all_prompt_database)
+        df_output[full_eval_metric_name+"_raw"] = df_output[full_eval_metric_name]
+        df_output[full_eval_metric_name] = df_output[full_eval_metric_name].apply(lambda x: np.mean(x))
 
-        candidate_results.append((metrics_tmp[full_eval_metric_name][candidate.replace(sentence_splitter, " ")], candidate))
-        assert candidate in all_prompt_database[full_eval_metric_name]
-    
-    candidate_results.sort(reverse=True)
+        eval_candidates = [_item[1] for _item in candidate_results[:beam_size]]
+        print("eval...")
+        metrics_tmp_eval = run_model_eval([candidate.replace(sentence_splitter, " ") for candidate in eval_candidates], model_obj, benchmark_obj_list_eval, eval_metric_name=eval_metric_name, split="test")
+        for candidate in eval_candidates:
+            for metric_key_tmp in metrics_tmp_eval:
+                if "eval_"+metric_key_tmp not in all_prompt_database:
+                    all_prompt_database["eval_"+metric_key_tmp] = {}
+                all_prompt_database["eval_"+metric_key_tmp][candidate] = metrics_tmp_eval[metric_key_tmp][candidate.replace(sentence_splitter, " ")]
+            
+            # Record iteration
+            all_prompt_database.setdefault("eval_num_iter", {}).setdefault(candidate, []).append(iter_idx)
 
-    curr_prompt_list = [tmp_item[1] for tmp_item in candidate_results[:beam_size]]
-    
-    df_output = pd.DataFrame(all_prompt_database)
-    df_output[full_eval_metric_name+"_raw"] = df_output[full_eval_metric_name]
-    df_output[full_eval_metric_name] = df_output[full_eval_metric_name].apply(lambda x: np.mean(x))
+        print(np.mean([all_prompt_database["eval_"+full_eval_metric_name][candidate] for candidate in eval_candidates]), flush=True)
 
-    # Evaluation
-    eval_candidates = [_item[1] for _item in candidate_results[:beam_size]]
-    print("final final eval...")
-    metrics_tmp_eval = run_model_eval([candidate.replace(sentence_splitter, " ") for candidate in eval_candidates], model_obj, benchmark_obj_list_eval, eval_metric_name=eval_metric_name, split="test")
-    for candidate in eval_candidates:
-        for metric_key_tmp in metrics_tmp_eval:
-            if "eval_"+metric_key_tmp not in all_prompt_database:
-                all_prompt_database["eval_"+metric_key_tmp] = {}
-            all_prompt_database["eval_"+metric_key_tmp][candidate] = metrics_tmp_eval[metric_key_tmp][candidate.replace(sentence_splitter, " ")]
+        df_output = df_output.sort_values(by=full_eval_metric_name, ascending=False)
+        print(df_output.head(5), flush=True)
 
-    df_output = df_output.sort_values(by=full_eval_metric_name, ascending=False)
-    
-    print(df_output.head(5), flush=True)
+        print(df_output.head(5), flush=True)
 
-    results = {
-    "model_name": model_name,
-    "best_prompts": [candidate for candidate in df_output.index[:beam_size]],
-    }
+        file_name = f"{model_name}_results_{current_date}.csv".replace("/","_")
 
-    return results
+        a = f"all_prompt_database_beamsearch_{file_name}"
+        b = f"prompt_component_database_{file_name}"
+
+        df_output.to_csv(a)
+        pcm_obj.save_database(b)
+
+        session = boto3.session.Session()
+
+        client = session.client(
+            "s3",
+            endpoint_url=os.getenv("S3_ENDPOINT"), 
+            aws_access_key_id=os.getenv("S3_SECRET_KEY"),  
+            aws_secret_access_key=os.getenv("S3_ACCESS_KEY"),  
+        )
+
+        print(
+            f"Uploading {a} to in bucket {bucket_name}"
+        )
+
+        client.upload_file(a, bucket_name, a)
+
+        print(
+            f"Uploading {b} to in bucket {bucket_name}"
+        )
+
+        client.upload_file(b, bucket_name, b)
+      
 
 @app.local_entrypoint()
 def main():
