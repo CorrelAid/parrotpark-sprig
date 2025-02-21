@@ -52,9 +52,9 @@ class inference_model:
     async def generate(
     self, 
     answer_prompts: Union[str, List[str]], 
-    max_token_len: int = 512,
+    max_token_len: int = 3000,
     temperature: float = 0.0,
-    max_concurrent=25,
+    max_concurrent=30,
     show_progress: bool = True
 ) -> List[str]:
         prompts = [answer_prompts] if isinstance(answer_prompts, str) else answer_prompts

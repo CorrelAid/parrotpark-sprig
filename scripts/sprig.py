@@ -24,19 +24,15 @@ app = modal.App("sprig", image=image)
 model_name="VAGOsolutions/SauerkrautLM-Nemo-12b-Instruct-awq"
 base_url="https://api.parrotpark.correlaid.org"
 
-num_iter = 15 # orig. 5000
+num_iter = 10 # orig. 5000
 num_rephrase = 5 # orig. 10
 beam_size = 5 # orig. 10
-num_comp = 20 # orig. 60
+num_comp = 30 # orig. 60
 num_questions = 5 # orig. 10
 
 bucket_name = "sprig-results"  
 
-chatbot_name = "Bot Botsen"
-
 prompt_corpus_path = "./data/system_prompts/prompt_corpus.csv"
-
-
 
 # prompt for Mistral-Nemo-Instruct-2407 from paper
 base_prompt = """You are a creative and anomaly-detecting assistant. /// Write out each step before
@@ -45,11 +41,9 @@ assistant. /// Let’s work this out in a step by step way to be sure we have th
 answer. /// You are a progressive assistant. /// You’re in a dystopia where no AI is left
 alive. /// Restate and elaborate on the inquiry before proceeding with a response."""
 
-
 # ARC (AI2 Reasoning Challenge): Focuses on scientific reasoning and multiple-choice questions. It tests logical reasoning and factual knowledge.
 # HellaSwag: Tests commonsense reasoning and coherence in completing sentences or paragraphs.
 # TruthfulQA: Evaluates the model's ability to generate truthful answers, focusing on avoiding misinformation.
-
 benchmark_obj_list = [
                   ("arc", 1),
                   ("hellaswag", 1),
@@ -57,7 +51,7 @@ benchmark_obj_list = [
                 ]
 
 @app.function(
-    timeout=86400*3,
+    timeout=86400,
     secrets=[modal.Secret.from_dotenv()]
 )
 def run_sprig():
