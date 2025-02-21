@@ -21,14 +21,13 @@ image = (
 app = modal.App("sprig", image=image)
 
 
-
 model_name="VAGOsolutions/SauerkrautLM-Nemo-12b-Instruct-awq"
 base_url="https://api.parrotpark.correlaid.org"
 
-num_iter = 10 # orig. 5000
-num_rephrase = 3 # orig. 10
-beam_size = 10 # orig. 10
-num_comp = 5 # orig. 60
+num_iter = 15 # orig. 5000
+num_rephrase = 5 # orig. 10
+beam_size = 5 # orig. 10
+num_comp = 20 # orig. 60
 num_questions = 5 # orig. 10
 
 bucket_name = "sprig-results"  
@@ -37,22 +36,33 @@ chatbot_name = "Bot Botsen"
 
 prompt_corpus_path = "./data/system_prompts/prompt_corpus.csv"
 
+
+
+# prompt for Mistral-Nemo-Instruct-2407 from paper
+base_prompt = """You are a creative and anomaly-detecting assistant. /// Write out each step before
+you give your final answer. /// You are a self-regulating, tolerant, and adaptable
+assistant. /// Let’s work this out in a step by step way to be sure we have the right
+answer. /// You are a progressive assistant. /// You’re in a dystopia where no AI is left
+alive. /// Restate and elaborate on the inquiry before proceeding with a response."""
+
+
+# ARC (AI2 Reasoning Challenge): Focuses on scientific reasoning and multiple-choice questions. It tests logical reasoning and factual knowledge.
+# HellaSwag: Tests commonsense reasoning and coherence in completing sentences or paragraphs.
+# TruthfulQA: Evaluates the model's ability to generate truthful answers, focusing on avoiding misinformation.
+
 benchmark_obj_list = [
-                # ("arc", 1),
+                  ("arc", 1),
                   ("hellaswag", 1),
-                #   ("truthfulqa", 1),
-                #   ("gsm8k", 1)
+                  ("truthfulqa", 1),
                 ]
 
-
-
 @app.function(
-    timeout=50000,
+    timeout=86400*3,
     secrets=[modal.Secret.from_dotenv()]
 )
 def run_sprig():
     nltk.download('punkt_tab')
-    current_date = datetime.now().strftime("%Y%m%d")  
+    current_date = datetime.now().strftime("%Y%m%d%H%M%S")
 
     for idx in range(len(benchmark_obj_list)):
         if isinstance(benchmark_obj_list[idx][0], str):
@@ -61,8 +71,6 @@ def run_sprig():
     benchmark_obj_list_eval = [(benchmark_obj_list[idx][0], None) for idx in range(len(benchmark_obj_list))]
 
     api_key=os.getenv("API_TOKEN")
-
-    base_prompt = ""
 
     prompt_corpus = pd.read_csv(prompt_corpus_path)
 
@@ -180,7 +188,7 @@ def run_sprig():
             # Record iteration
             all_prompt_database.setdefault("eval_num_iter", {}).setdefault(candidate, []).append(iter_idx)
 
-        print(np.mean([all_prompt_database["eval_"+full_eval_metric_name][candidate] for candidate in eval_candidates]), flush=True)
+        print("mean score: ", np.mean([all_prompt_database["eval_"+full_eval_metric_name][candidate] for candidate in eval_candidates]), flush=True)
 
         df_output = df_output.sort_values(by=full_eval_metric_name, ascending=False)
         print(df_output.head(5), flush=True)
@@ -189,7 +197,7 @@ def run_sprig():
 
         file_name = f"{model_name}_results_{current_date}.csv".replace("/","_")
 
-        a = f"all_prompt_database_beamsearch_{file_name}"
+        a = f"all_prompt_database_beamsearch_{file_name}"   
         b = f"prompt_component_database_{file_name}"
 
         df_output.to_csv(a)
@@ -200,8 +208,8 @@ def run_sprig():
         client = session.client(
             "s3",
             endpoint_url=os.getenv("S3_ENDPOINT"), 
-            aws_access_key_id=os.getenv("S3_SECRET_KEY"),  
-            aws_secret_access_key=os.getenv("S3_ACCESS_KEY"),  
+            aws_access_key_id=os.getenv("S3_ACCESS_KEY"),  
+            aws_secret_access_key=os.getenv("S3_SECRET_KEY"),  
         )
 
         print(
