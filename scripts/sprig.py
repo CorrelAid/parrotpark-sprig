@@ -24,11 +24,11 @@ app = modal.App("sprig", image=image)
 model_name="VAGOsolutions/SauerkrautLM-Nemo-12b-Instruct-awq"
 base_url="https://api.parrotpark.correlaid.org"
 
-num_iter = 10 # orig. 5000
-num_rephrase = 5 # orig. 10
-beam_size = 5 # orig. 10
-num_comp = 30 # orig. 60
-num_questions = 5 # orig. 10
+num_iter = 8 # orig. 5000
+num_rephrase = 3 # orig. 10
+beam_size = 3 # orig. 10
+num_comp = 10 # orig. 60
+num_questions = 4 # orig. 10
 
 bucket_name = "sprig-results"  
 
@@ -56,7 +56,17 @@ benchmark_obj_list = [
 )
 def run_sprig():
     nltk.download('punkt_tab')
+
+    print(f"num_iter = {num_iter}")
+    print(f"num_rephrase = {num_rephrase}")
+    print(f"beam_size = {beam_size}")
+    print(f"num_comp = {num_comp}")
+    print(f"num_questions = {num_questions}")
+
+
     current_date = datetime.now().strftime("%Y%m%d%H%M%S")
+
+    print(f"current_date = {current_date}")
 
     for idx in range(len(benchmark_obj_list)):
         if isinstance(benchmark_obj_list[idx][0], str):
@@ -90,6 +100,7 @@ def run_sprig():
     # Evaluation
     eval_candidates = curr_prompt_list
     metrics_tmp_eval = run_model_eval([candidate.replace(sentence_splitter, " ") for candidate in eval_candidates], model_obj, benchmark_obj_list_eval, eval_metric_name=eval_metric_name, split="test")
+    print("base prompt metrics:\n", metrics_tmp_eval, "\n")
     for candidate in eval_candidates:
         for metric_key_tmp in metrics_tmp_eval:
             if "eval_"+metric_key_tmp not in all_prompt_database:
