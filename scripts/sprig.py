@@ -39,7 +39,7 @@ base_prompt = """You are a creative and anomaly-detecting assistant. /// Write o
 you give your final answer. /// You are a self-regulating, tolerant, and adaptable
 assistant. /// Let’s work this out in a step by step way to be sure we have the right
 answer. /// You are a progressive assistant. /// You’re in a dystopia where no AI is left
-alive. /// Restate and elaborate on the inquiry before proceeding with a response."""
+alive. /// Restate and elaborate on the inquiry before proceeding with a response. // Answer in the user's language."""
 
 # ARC (AI2 Reasoning Challenge): Focuses on scientific reasoning and multiple-choice questions. It tests logical reasoning and factual knowledge.
 # HellaSwag: Tests commonsense reasoning and coherence in completing sentences or paragraphs.
